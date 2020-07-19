@@ -1,41 +1,89 @@
 #![no_main]
 #![no_std]
 
-use cortex_m;
+use crate::hal::{gpio::*, prelude::*, serial::*, stm32, stm32::USART1, time::Bps};
+
+use heapless::{
+    consts::*,
+    i,
+    spsc::{Consumer, Producer, Queue},
+};
+use midi_port::{MidiInPort, MidiMessage};
+
 use panic_halt as _;
 use stm32f4xx_hal as hal;
-
-use crate::hal::{delay::*, gpio::*, prelude::*, stm32};
 
 #[rtic::app(device = stm32)]
 const APP: () = {
     struct Resources {
-        delay: Delay,
-        led: gpiod::PD14<Output<PushPull>>,
+        producer: Producer<'static, u8, U32>,
+        consumer: Consumer<'static, u8, U32>,
+        midiIn: MidiInPort<Rx<USART1>>,
+        tx: Tx<USART1>,
     }
 
     #[init]
     fn init(_: init::Context) -> init::LateResources {
+        static mut QUEUE: Queue<u8, U32> = Queue(i::Queue::new());
+        let (producer, consumer) = QUEUE.split();
+
         let dp = stm32::Peripherals::take().unwrap();
-        let cp = cortex_m::peripheral::Peripherals::take().unwrap();
         let rcc = dp.RCC.constrain();
         let clocks = rcc.cfgr.sysclk(168.mhz()).freeze();
-        let delay = Delay::new(cp.SYST, clocks);
 
-        let gpiod = dp.GPIOD.split();
+        let _gpioa = dp.GPIOA.split();
+        let gpiob = dp.GPIOB.split();
 
-        let led = gpiod.pd14.into_push_pull_output();
+        let txPin = gpiob.pb6.into_alternate_af7();
+        let rxPin = gpiob.pb7.into_alternate_af7();
+        let mut serial = Serial::usart1(
+            dp.USART1,
+            (txPin, rxPin),
+            config::Config::default().baudrate(Bps(31250)),
+            clocks,
+        )
+        .unwrap();
+        serial.listen(Event::Rxne);
+        let (tx, rx) = serial.split();
 
-        init::LateResources { delay, led }
+        let midiIn = MidiInPort::new(rx);
+
+        init::LateResources {
+            producer,
+            consumer,
+            midiIn,
+            tx,
+        }
     }
 
-    #[idle(resources = [delay, led])]
+    #[idle(resources = [consumer, tx])]
     fn idle(c: idle::Context) -> ! {
         loop {
-            c.resources.led.set_high().unwrap();
-            c.resources.delay.delay_ms(1000_u32);
-            c.resources.led.set_low().unwrap();
-            c.resources.delay.delay_ms(1000_u32);
+            if let Some(byte) = c.resources.consumer.peek() {
+                if c.resources.tx.write(*byte).is_ok() {
+                    c.resources.consumer.dequeue().unwrap();
+                }
+            }
+        }
+    }
+
+    #[task(binds = USART1, resources = [producer, midiIn])]
+    fn usart2(c: usart2::Context) {
+        c.resources.midiIn.poll_uart();
+        if let Some(message) = c.resources.midiIn.get_message() {
+            match message {
+                MidiMessage::NoteOn {
+                    channel: _,
+                    note: _,
+                    velocity: _,
+                } => {
+                    let bytes = b"note on\r\n";
+                    for b in bytes {
+                        c.resources.producer.enqueue(*b).unwrap();
+                    }
+                }
+                _ => {}
+            }
         }
     }
 };
