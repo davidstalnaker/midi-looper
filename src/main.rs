@@ -1,8 +1,11 @@
 #![no_main]
 #![no_std]
 
+mod clock;
+
 use crate::hal::{gpio::*, prelude::*, serial::*, stm32, stm32::USART1, time::Bps};
 
+use clock::Clock;
 use heapless::{
     consts::*,
     i,
@@ -13,7 +16,7 @@ use panic_halt as _;
 use rtic::cyccnt::U32Ext;
 use stm32f4xx_hal as hal;
 
-const PERIOD: u32 = 168_000_000;
+const PERIOD: u32 = 168_000;
 
 #[rtic::app(device = stm32, monotonic = rtic::cyccnt::CYCCNT)]
 const APP: () = {
@@ -22,6 +25,7 @@ const APP: () = {
         consumer: Consumer<'static, u8, U32>,
         midiIn: MidiInPort<Rx<USART1>>,
         tx: Tx<USART1>,
+        clock: Clock,
     }
 
     #[init(schedule = [tick])]
@@ -50,6 +54,8 @@ const APP: () = {
 
         let midiIn = MidiInPort::new(rx);
 
+        let clock = Clock::new();
+
         let mut core = c.core;
         core.DWT.enable_cycle_counter();
         c.schedule.tick(c.start + PERIOD.cycles()).unwrap();
@@ -59,6 +65,7 @@ const APP: () = {
             consumer,
             midiIn,
             tx,
+            clock,
         }
     }
 
@@ -73,11 +80,14 @@ const APP: () = {
         }
     }
 
-    #[task(schedule = [tick], resources = [producer])]
+    #[task(schedule = [tick], resources = [clock, producer])]
     fn tick(c: tick::Context) {
-        let bytes = b"tick\r\n";
-        for b in bytes {
-            c.resources.producer.enqueue(*b).unwrap();
+        c.resources.clock.increment();
+        if c.resources.clock.count % 1000 == 0 {
+            let bytes = b"tick\r\n";
+            for b in bytes {
+                c.resources.producer.enqueue(*b).unwrap();
+            }
         }
         c.schedule.tick(c.scheduled + PERIOD.cycles()).unwrap();
     }
