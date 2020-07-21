@@ -54,7 +54,7 @@ const APP: () = {
 
         let midiIn = MidiInPort::new(rx);
 
-        let clock = Clock::new();
+        let clock = Clock::new(1500);
 
         let mut core = c.core;
         core.DWT.enable_cycle_counter();
@@ -83,7 +83,7 @@ const APP: () = {
     #[task(schedule = [tick], resources = [clock, producer])]
     fn tick(c: tick::Context) {
         c.resources.clock.increment();
-        if c.resources.clock.count % 1000 == 0 {
+        if c.resources.clock.get_current_count_ms() == 0 {
             let bytes = b"tick\r\n";
             for b in bytes {
                 c.resources.producer.enqueue(*b).unwrap();
