@@ -9,11 +9,13 @@ use heapless::{
     spsc::{Consumer, Producer, Queue},
 };
 use midi_port::{MidiInPort, MidiMessage};
-
 use panic_halt as _;
+use rtic::cyccnt::U32Ext;
 use stm32f4xx_hal as hal;
 
-#[rtic::app(device = stm32)]
+const PERIOD: u32 = 168_000_000;
+
+#[rtic::app(device = stm32, monotonic = rtic::cyccnt::CYCCNT)]
 const APP: () = {
     struct Resources {
         producer: Producer<'static, u8, U32>,
@@ -22,8 +24,8 @@ const APP: () = {
         tx: Tx<USART1>,
     }
 
-    #[init]
-    fn init(_: init::Context) -> init::LateResources {
+    #[init(schedule = [tick])]
+    fn init(c: init::Context) -> init::LateResources {
         static mut QUEUE: Queue<u8, U32> = Queue(i::Queue::new());
         let (producer, consumer) = QUEUE.split();
 
@@ -48,6 +50,10 @@ const APP: () = {
 
         let midiIn = MidiInPort::new(rx);
 
+        let mut core = c.core;
+        core.DWT.enable_cycle_counter();
+        c.schedule.tick(c.start + PERIOD.cycles()).unwrap();
+
         init::LateResources {
             producer,
             consumer,
@@ -67,16 +73,21 @@ const APP: () = {
         }
     }
 
+    #[task(schedule = [tick], resources = [producer])]
+    fn tick(c: tick::Context) {
+        let bytes = b"tick\r\n";
+        for b in bytes {
+            c.resources.producer.enqueue(*b).unwrap();
+        }
+        c.schedule.tick(c.scheduled + PERIOD.cycles()).unwrap();
+    }
+
     #[task(binds = USART1, resources = [producer, midiIn])]
     fn usart2(c: usart2::Context) {
         c.resources.midiIn.poll_uart();
         if let Some(message) = c.resources.midiIn.get_message() {
             match message {
-                MidiMessage::NoteOn {
-                    channel: _,
-                    note: _,
-                    velocity: _,
-                } => {
+                MidiMessage::NoteOn { .. } => {
                     let bytes = b"note on\r\n";
                     for b in bytes {
                         c.resources.producer.enqueue(*b).unwrap();
@@ -85,5 +96,12 @@ const APP: () = {
                 _ => {}
             }
         }
+    }
+
+    // RTIC requires that unused interrupts are declared in an extern block when
+    // using software tasks; these free interrupts will be used to dispatch the
+    // software tasks.
+    extern "C" {
+        fn SDIO();
     }
 };
