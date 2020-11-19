@@ -2,35 +2,88 @@
 #![no_std]
 
 mod clock;
+mod loop_buffer;
 
 use crate::hal::{gpio::*, prelude::*, serial::*, stm32, stm32::USART1, time::Bps};
 
 use clock::Clock;
+use cortex_m::{iprintln, peripheral::ITM};
 use heapless::{
     consts::*,
     i,
     spsc::{Consumer, Producer, Queue},
 };
+use loop_buffer::LoopBuffer;
 use midi_port::{MidiInPort, MidiMessage};
-use panic_halt as _;
+use panic_itm as _;
 use rtic::cyccnt::U32Ext;
 use stm32f4xx_hal as hal;
 
 const PERIOD: u32 = 168_000;
 
+fn copy_midi_message(message: &MidiMessage) -> MidiMessage {
+    return match message {
+        &MidiMessage::NoteOn {
+            channel,
+            note,
+            velocity,
+        } => MidiMessage::NoteOn {
+            channel,
+            note,
+            velocity,
+        },
+        &MidiMessage::NoteOff {
+            channel,
+            note,
+            velocity,
+        } => MidiMessage::NoteOff {
+            channel,
+            note,
+            velocity,
+        },
+        &MidiMessage::Aftertouch {
+            channel,
+            note,
+            value,
+        } => MidiMessage::Aftertouch {
+            channel,
+            note,
+            value,
+        },
+        &MidiMessage::ControlChange {
+            channel,
+            controller,
+            value,
+        } => MidiMessage::ControlChange {
+            channel,
+            controller,
+            value,
+        },
+        &MidiMessage::ProgramChange { channel, program } => {
+            MidiMessage::ProgramChange { channel, program }
+        }
+        &MidiMessage::PitchBendChange { channel, value } => {
+            MidiMessage::PitchBendChange { channel, value }
+        }
+        _ => MidiMessage::Unknown,
+    };
+}
+
 #[rtic::app(device = stm32, monotonic = rtic::cyccnt::CYCCNT)]
 const APP: () = {
     struct Resources {
-        producer: Producer<'static, u8, U32>,
-        consumer: Consumer<'static, u8, U32>,
+        producer: Producer<'static, MidiMessage, U32>,
+        consumer: Consumer<'static, MidiMessage, U32>,
         midiIn: MidiInPort<Rx<USART1>>,
         tx: Tx<USART1>,
         clock: Clock,
+        loop_buffer: LoopBuffer,
+        itm: ITM,
     }
 
     #[init(schedule = [tick])]
     fn init(c: init::Context) -> init::LateResources {
-        static mut QUEUE: Queue<u8, U32> = Queue(i::Queue::new());
+        static mut QUEUE: Queue<MidiMessage, U32> = Queue(i::Queue::new());
         let (producer, consumer) = QUEUE.split();
 
         let dp = stm32::Peripherals::take().unwrap();
@@ -55,10 +108,13 @@ const APP: () = {
         let midiIn = MidiInPort::new(rx);
 
         let clock = Clock::new(1500);
+        let loop_buffer = LoopBuffer::new();
 
         let mut core = c.core;
         core.DWT.enable_cycle_counter();
         c.schedule.tick(c.start + PERIOD.cycles()).unwrap();
+        let mut itm = core.ITM;
+        iprintln!(&mut itm.stim[0], "Start");
 
         init::LateResources {
             producer,
@@ -66,45 +122,49 @@ const APP: () = {
             midiIn,
             tx,
             clock,
+            loop_buffer,
+            itm,
         }
     }
 
-    #[idle(resources = [consumer, tx])]
-    fn idle(c: idle::Context) -> ! {
+    #[idle(resources = [consumer, tx, itm])]
+    fn idle(mut c: idle::Context) -> ! {
         loop {
-            if let Some(byte) = c.resources.consumer.peek() {
-                if c.resources.tx.write(*byte).is_ok() {
-                    c.resources.consumer.dequeue().unwrap();
-                }
+            if let Some(_) = c.resources.consumer.dequeue() {
+                c.resources.itm.lock(|itm| {
+                    iprintln!(&mut itm.stim[0], "note");
+                })
             }
         }
     }
 
-    #[task(schedule = [tick], resources = [clock, producer])]
+    #[task(schedule = [tick], resources = [clock, producer, loop_buffer, itm])]
     fn tick(c: tick::Context) {
         c.resources.clock.increment();
         if c.resources.clock.get_current_count_ms() == 0 {
-            let bytes = b"tick\r\n";
-            for b in bytes {
-                c.resources.producer.enqueue(*b).unwrap();
-            }
+            iprintln!(&mut c.resources.itm.stim[0], "tick");
+        }
+        if let Some(message) = c
+            .resources
+            .loop_buffer
+            .get_message(c.resources.clock.get_current_count_ms())
+        {
+            c.resources
+                .producer
+                .enqueue(copy_midi_message(message))
+                .unwrap();
         }
         c.schedule.tick(c.scheduled + PERIOD.cycles()).unwrap();
     }
 
-    #[task(binds = USART1, resources = [producer, midiIn])]
+    #[task(binds = USART1, resources = [midiIn, loop_buffer, clock, itm])]
     fn usart2(c: usart2::Context) {
         c.resources.midiIn.poll_uart();
         if let Some(message) = c.resources.midiIn.get_message() {
-            match message {
-                MidiMessage::NoteOn { .. } => {
-                    let bytes = b"note on\r\n";
-                    for b in bytes {
-                        c.resources.producer.enqueue(*b).unwrap();
-                    }
-                }
-                _ => {}
-            }
+            iprintln!(&mut c.resources.itm.stim[0], "note");
+            c.resources
+                .loop_buffer
+                .insert_message(c.resources.clock.get_current_count_ms(), message);
         }
     }
 
