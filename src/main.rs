@@ -8,7 +8,7 @@ use crate::hal::{gpio::*, prelude::*, serial::*, stm32, stm32::USART1, time::Bps
 
 use clock::Clock;
 use cortex_m::{iprintln, peripheral::ITM};
-use embedded_midi::{MidiIn, MidiMessage};
+use embedded_midi::{MidiIn, MidiMessage, MidiOut};
 use heapless::{
     consts::*,
     i,
@@ -59,7 +59,7 @@ const APP: () = {
         producer: Producer<'static, MidiMessage, U32>,
         consumer: Consumer<'static, MidiMessage, U32>,
         midiIn: MidiIn<Rx<USART1>>,
-        tx: Tx<USART1>,
+        midiOut: MidiOut<Tx<USART1>>,
         clock: Clock,
         loop_buffer: LoopBuffer,
         itm: ITM,
@@ -90,6 +90,7 @@ const APP: () = {
         let (tx, rx) = serial.split();
 
         let midiIn = MidiIn::new(rx);
+        let midiOut = MidiOut::new(tx);
 
         let clock = Clock::new(1500);
         let loop_buffer = LoopBuffer::new();
@@ -104,17 +105,18 @@ const APP: () = {
             producer,
             consumer,
             midiIn,
-            tx,
+            midiOut,
             clock,
             loop_buffer,
             itm,
         }
     }
 
-    #[idle(resources = [consumer, tx, itm])]
+    #[idle(resources = [consumer, midiOut, itm])]
     fn idle(mut c: idle::Context) -> ! {
         loop {
-            if let Some(_) = c.resources.consumer.dequeue() {
+            if let Some(message) = c.resources.consumer.dequeue() {
+                c.resources.midiOut.write(message).unwrap();
                 c.resources.itm.lock(|itm| {
                     iprintln!(&mut itm.stim[0], "note");
                 })
@@ -141,10 +143,14 @@ const APP: () = {
         c.schedule.tick(c.scheduled + PERIOD.cycles()).unwrap();
     }
 
-    #[task(binds = USART1, resources = [midiIn, loop_buffer, clock, itm])]
+    #[task(binds = USART1, resources = [midiIn, producer, loop_buffer, clock, itm])]
     fn usart2(c: usart2::Context) {
         if let Ok(message) = c.resources.midiIn.read() {
             iprintln!(&mut c.resources.itm.stim[0], "note");
+            c.resources
+                .producer
+                .enqueue(copy_midi_message(&message))
+                .unwrap();
             c.resources
                 .loop_buffer
                 .insert_message(c.resources.clock.get_current_count_ms(), message);
