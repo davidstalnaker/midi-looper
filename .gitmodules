@@ -1,0 +1,6 @@
+[submodule "midi-types"]
+	path = midi-types
+	url = https://github.com/davidstalnaker/midi-types.git
+[submodule "embedded-midi"]
+	path = embedded-midi
+	url = https://github.com/davidstalnaker/embedded-midi.git

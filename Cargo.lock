@@ -129,10 +129,9 @@ dependencies = [
 [[package]]
 name = "embedded-midi"
 version = "0.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b48bf34ef90b2f46793411b3c6dd7e8c5aedd529ad07555f72fc863e219acac"
 dependencies = [
  "embedded-hal",
+ "midi-types",
  "nb 0.1.3",
 ]
 
@@ -214,6 +213,10 @@ dependencies = [
  "panic-itm",
  "stm32f4xx-hal",
 ]
+
+[[package]]
+name = "midi-types"
+version = "0.1.0"
 
 [[package]]
 name = "nb"
