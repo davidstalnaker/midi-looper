@@ -8,13 +8,13 @@ use crate::hal::{gpio::*, prelude::*, serial::*, stm32, stm32::USART1, time::Bps
 
 use clock::Clock;
 use cortex_m::{iprintln, peripheral::ITM};
+use embedded_midi::{MidiIn, MidiMessage};
 use heapless::{
     consts::*,
     i,
     spsc::{Consumer, Producer, Queue},
 };
 use loop_buffer::LoopBuffer;
-use midi_port::{MidiInPort, MidiMessage};
 use panic_itm as _;
 use rtic::cyccnt::U32Ext;
 use stm32f4xx_hal as hal;
@@ -23,49 +23,33 @@ const PERIOD: u32 = 168_000;
 
 fn copy_midi_message(message: &MidiMessage) -> MidiMessage {
     return match message {
-        &MidiMessage::NoteOn {
-            channel,
-            note,
-            velocity,
-        } => MidiMessage::NoteOn {
-            channel,
-            note,
-            velocity,
-        },
-        &MidiMessage::NoteOff {
-            channel,
-            note,
-            velocity,
-        } => MidiMessage::NoteOff {
-            channel,
-            note,
-            velocity,
-        },
-        &MidiMessage::Aftertouch {
-            channel,
-            note,
-            value,
-        } => MidiMessage::Aftertouch {
-            channel,
-            note,
-            value,
-        },
-        &MidiMessage::ControlChange {
-            channel,
-            controller,
-            value,
-        } => MidiMessage::ControlChange {
-            channel,
-            controller,
-            value,
-        },
-        &MidiMessage::ProgramChange { channel, program } => {
-            MidiMessage::ProgramChange { channel, program }
+        &MidiMessage::NoteOff(channel, note, value) => MidiMessage::NoteOff(channel, note, value),
+        &MidiMessage::NoteOn(channel, note, value) => MidiMessage::NoteOn(channel, note, value),
+        &MidiMessage::KeyPressure(channel, note, value) => {
+            MidiMessage::KeyPressure(channel, note, value)
         }
-        &MidiMessage::PitchBendChange { channel, value } => {
-            MidiMessage::PitchBendChange { channel, value }
+        &MidiMessage::ControlChange(channel, note, value) => {
+            MidiMessage::ControlChange(channel, note, value)
         }
-        _ => MidiMessage::Unknown,
+        &MidiMessage::ProgramChange(channel, program) => {
+            MidiMessage::ProgramChange(channel, program)
+        }
+        &MidiMessage::ChannelPressure(channel, value) => {
+            MidiMessage::ChannelPressure(channel, value)
+        }
+        &MidiMessage::PitchBendChange(channel, value) => {
+            MidiMessage::PitchBendChange(channel, value)
+        }
+        &MidiMessage::QuarterFrame(quarter_frame) => MidiMessage::QuarterFrame(quarter_frame),
+        &MidiMessage::SongPositionPointer(value) => MidiMessage::SongPositionPointer(value),
+        &MidiMessage::SongSelect(value) => MidiMessage::SongSelect(value),
+        &MidiMessage::TuneRequest => MidiMessage::TuneRequest,
+        &MidiMessage::TimingClock => MidiMessage::TimingClock,
+        &MidiMessage::Start => MidiMessage::Start,
+        &MidiMessage::Continue => MidiMessage::Continue,
+        &MidiMessage::Stop => MidiMessage::Stop,
+        &MidiMessage::ActiveSensing => MidiMessage::ActiveSensing,
+        &MidiMessage::Reset => MidiMessage::Reset,
     };
 }
 
@@ -74,7 +58,7 @@ const APP: () = {
     struct Resources {
         producer: Producer<'static, MidiMessage, U32>,
         consumer: Consumer<'static, MidiMessage, U32>,
-        midiIn: MidiInPort<Rx<USART1>>,
+        midiIn: MidiIn<Rx<USART1>>,
         tx: Tx<USART1>,
         clock: Clock,
         loop_buffer: LoopBuffer,
@@ -105,7 +89,7 @@ const APP: () = {
         serial.listen(Event::Rxne);
         let (tx, rx) = serial.split();
 
-        let midiIn = MidiInPort::new(rx);
+        let midiIn = MidiIn::new(rx);
 
         let clock = Clock::new(1500);
         let loop_buffer = LoopBuffer::new();
@@ -159,8 +143,7 @@ const APP: () = {
 
     #[task(binds = USART1, resources = [midiIn, loop_buffer, clock, itm])]
     fn usart2(c: usart2::Context) {
-        c.resources.midiIn.poll_uart();
-        if let Some(message) = c.resources.midiIn.get_message() {
+        if let Ok(message) = c.resources.midiIn.read() {
             iprintln!(&mut c.resources.itm.stim[0], "note");
             c.resources
                 .loop_buffer

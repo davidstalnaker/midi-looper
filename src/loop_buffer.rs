@@ -1,5 +1,5 @@
+use embedded_midi::MidiMessage;
 use heapless::{consts::*, FnvIndexMap};
-use midi_port::MidiMessage;
 pub struct LoopBuffer {
     buffer: FnvIndexMap<u32, MidiMessage, U64>,
 }
