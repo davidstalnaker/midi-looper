@@ -21,38 +21,6 @@ use stm32f4xx_hal as hal;
 
 const PERIOD: u32 = 168_000;
 
-fn copy_midi_message(message: &MidiMessage) -> MidiMessage {
-    return match message {
-        &MidiMessage::NoteOff(channel, note, value) => MidiMessage::NoteOff(channel, note, value),
-        &MidiMessage::NoteOn(channel, note, value) => MidiMessage::NoteOn(channel, note, value),
-        &MidiMessage::KeyPressure(channel, note, value) => {
-            MidiMessage::KeyPressure(channel, note, value)
-        }
-        &MidiMessage::ControlChange(channel, note, value) => {
-            MidiMessage::ControlChange(channel, note, value)
-        }
-        &MidiMessage::ProgramChange(channel, program) => {
-            MidiMessage::ProgramChange(channel, program)
-        }
-        &MidiMessage::ChannelPressure(channel, value) => {
-            MidiMessage::ChannelPressure(channel, value)
-        }
-        &MidiMessage::PitchBendChange(channel, value) => {
-            MidiMessage::PitchBendChange(channel, value)
-        }
-        &MidiMessage::QuarterFrame(quarter_frame) => MidiMessage::QuarterFrame(quarter_frame),
-        &MidiMessage::SongPositionPointer(value) => MidiMessage::SongPositionPointer(value),
-        &MidiMessage::SongSelect(value) => MidiMessage::SongSelect(value),
-        &MidiMessage::TuneRequest => MidiMessage::TuneRequest,
-        &MidiMessage::TimingClock => MidiMessage::TimingClock,
-        &MidiMessage::Start => MidiMessage::Start,
-        &MidiMessage::Continue => MidiMessage::Continue,
-        &MidiMessage::Stop => MidiMessage::Stop,
-        &MidiMessage::ActiveSensing => MidiMessage::ActiveSensing,
-        &MidiMessage::Reset => MidiMessage::Reset,
-    };
-}
-
 #[rtic::app(device = stm32, monotonic = rtic::cyccnt::CYCCNT)]
 const APP: () = {
     struct Resources {
@@ -135,10 +103,7 @@ const APP: () = {
             .loop_buffer
             .get_message(c.resources.clock.get_current_count_ms())
         {
-            c.resources
-                .producer
-                .enqueue(copy_midi_message(message))
-                .unwrap();
+            c.resources.producer.enqueue(message.clone()).unwrap();
         }
         c.schedule.tick(c.scheduled + PERIOD.cycles()).unwrap();
     }
@@ -147,10 +112,7 @@ const APP: () = {
     fn usart2(c: usart2::Context) {
         if let Ok(message) = c.resources.midiIn.read() {
             iprintln!(&mut c.resources.itm.stim[0], "note");
-            c.resources
-                .producer
-                .enqueue(copy_midi_message(&message))
-                .unwrap();
+            c.resources.producer.enqueue(message.clone()).unwrap();
             c.resources
                 .loop_buffer
                 .insert_message(c.resources.clock.get_current_count_ms(), message);
