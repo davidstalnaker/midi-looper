@@ -128,7 +128,9 @@ dependencies = [
 
 [[package]]
 name = "embedded-midi"
-version = "0.0.2"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef7a28b2d5258930626c39396985be2a47b6b3e76fbfe3a6e43adadd8a5e6ff8"
 dependencies = [
  "embedded-hal",
  "midi-types",
@@ -216,7 +218,9 @@ dependencies = [
 
 [[package]]
 name = "midi-types"
-version = "0.1.0"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e29739ad6afe9e5323273a91592000a35ff140ff2dadfe740551d8b02915b9ed"
 
 [[package]]
 name = "nb"
