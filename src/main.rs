@@ -84,7 +84,7 @@ const APP: () = {
     fn idle(mut c: idle::Context) -> ! {
         loop {
             if let Some(message) = c.resources.consumer.dequeue() {
-                c.resources.midiOut.write(message).unwrap();
+                c.resources.midiOut.write(&message).unwrap();
                 c.resources.itm.lock(|itm| {
                     iprintln!(&mut itm.stim[0], "note");
                 })
